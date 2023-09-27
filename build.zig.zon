@@ -1,0 +1,14 @@
+.{
+    .name = "sensus-probe",
+    .version = "0.1.0",
+    .dependencies = .{
+        .microzig = .{
+            .url = "https://github.com/ZigEmbeddedGroup/microzig/archive/refs/heads/main.tar.gz",
+            .hash = "1220a16b69f6dc2c4470a71c1ab38ae059607de1a393ebfea64e41a2d47d78e58afc",
+        },
+        .stm32 = .{
+            .url = "https://github.com/ZigEmbeddedGroup/stmicro-stm32/archive/refs/heads/main.tar.gz",
+            .hash = "1220960897777f9713fa1055ffdf1fbad1518b2f62bd2f2ae39b887821dbf0781df0",
+        },
+    },
+}
