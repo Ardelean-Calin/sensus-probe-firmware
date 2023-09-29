@@ -17,6 +17,9 @@
       nativeBuildInputs = with pkgs; [
         openocd
 				gcc-arm-embedded
+        clang
+        clang-tools
+				minicom
         zig
       ];
     };
