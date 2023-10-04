@@ -1,12 +1,17 @@
 const std = @import("std");
+const mem = std.mem;
 const microzig = @import("microzig");
+const delay = @import("delay.zig");
 
 const c = @cImport({
     @cInclude("libopencm3/stm32/gpio.h");
     @cInclude("libopencm3/stm32/rcc.h");
     @cInclude("libopencm3/stm32/adc.h");
     @cInclude("libopencm3/stm32/usart.h");
+    @cInclude("libopencm3/stm32/lptimer.h");
 });
+
+const RCC = microzig.chip.peripherals.RCC;
 
 // The order in which the operations run is important.
 fn rcc_setup() void {
@@ -29,17 +34,32 @@ fn rcc_setup() void {
         .voltage_scale = 0, // Voltage scale 1
     };
     c.rcc_clock_setup_pll(&rcc_config);
-    c.rcc_set_usart2_sel(0x00); // PCLK
+    c.rcc_set_usart2_sel(0x00); // APB
+    c.rcc_set_lptim1_sel(0x00); // APB
     c.rcc_set_sysclk_source(c.RCC_HSI16);
 
     c.rcc_periph_clock_enable(c.RCC_USART2);
     c.rcc_periph_clock_enable(c.RCC_ADC1);
     c.rcc_periph_clock_enable(c.RCC_GPIOA);
+    c.rcc_periph_clock_enable(c.RCC_LPTIM1);
+    // Enable system configuration clock. Needed for comparator.
+    c.rcc_periph_clock_enable(c.RCC_SYSCFG);
 }
 
 fn gpio_setup() void {
     // Set GPIO10 as output
     c.gpio_mode_setup(c.GPIOA, c.GPIO_MODE_OUTPUT, c.GPIO_PUPD_NONE, c.GPIO10);
+
+    // TODO. Add all Comparator-related pins' Alternate Functions
+    c.gpio_mode_setup(c.GPIOA, c.GPIO_MODE_OUTPUT, c.GPIO_PUPD_NONE, c.GPIO4); // Frequency enable
+    // c.gpio_mode_setup(c.GPIOA, c.GPIO_MODE_OUTPUT, c.GPIO_PUPD_NONE, c.GPIO0); // Comparator out
+
+    c.gpio_mode_setup(c.GPIOA, c.GPIO_MODE_AF, c.GPIO_PUPD_NONE, c.GPIO0); // Comparator out
+    // c.gpio_mode_setup(c.GPIOA, c.GPIO_MODE_ANALOG, c.GPIO_PUPD_NONE, c.GPIO1); // Comparator in
+    // c.gpio_mode_setup(c.GPIOA, c.GPIO_MODE_ANALOG, c.GPIO_PUPD_NONE, c.GPIO5); // Comparator in
+    c.gpio_set_af(c.GPIOA, c.GPIO_AF7, c.GPIO0); // AF7 is COMP1 out
+    // c.gpio_set_af(c.GPIOA, c.GPIO_AF1, c.GPIO5); // PA5 is LPTIM1_IN2
+
     // Set GPIO9 as USART Tx
     c.gpio_mode_setup(c.GPIOA, c.GPIO_MODE_AF, c.GPIO_PUPD_NONE, c.GPIO9);
 
@@ -82,7 +102,40 @@ fn usart_setup() void {
     c.usart_enable(c.USART2);
 }
 
-fn println(str: []const u8) void {
+fn lptim_setup() void {
+    // Any settings need to be configured while timer is disabled.
+    c.lptimer_disable(c.LPTIM1);
+
+    c.rcc_set_peripheral_clk_sel(c.LPTIM1, c.RCC_CCIPR_LPTIM1SEL_APB);
+    c.rcc_periph_clock_enable(c.RCC_LPTIM1);
+
+    // LPTIMER is driven from comparator out
+    c.lptimer_set_external_clock_source(c.LPTIM1);
+    c.lptimer_set_prescaler(c.LPTIM1, c.LPTIM_CFGR_PRESC_1);
+    c.lptimer_select_trigger_source(c.LPTIM1, c.LPTIM_CFGR_TRIGSEL_EXT_TRIG6);
+    c.lptimer_enable_trigger(c.LPTIM1, c.LPTIM_CFGR_TRIGEN_SW);
+
+    c.lptimer_enable(c.LPTIM1);
+
+    // May not be necessary
+    // Timer will stop when reaching this value
+    c.lptimer_set_period(c.LPTIM1, 0xFFFF);
+}
+
+// The comparator is really easy to set up
+fn comparator_setup() void {
+    // c.rcc_periph_clock_enable(c.RCC_COMP1);
+    const COMP1_CSR: *u32 = @ptrFromInt(0x4001_0018);
+    // Bit 15   - COMP1POLARITY = 0 (not inverted)
+    // Bit 12   - COMP1LPTIMIN1 = 1 (COMP1 out connected to LPTIM1)
+    // Bit 8    - COMP1WM = 0 (Plus input of comparator 1 connected to PA1)
+    // Bit 5:4  - COMP1INNSEL = 0b11 (COMP1 minus connected to PA5)
+    // Bit 0    - COMP1EN = 1 (Comparator 1 enabled)
+    // COMP1_CSR.* = 0b0001_0000_0011_0001;
+    COMP1_CSR.* = 0x1031;
+}
+
+fn print(str: []const u8) void {
     for (str, 0..) |char, i| {
         _ = i;
 
@@ -91,15 +144,61 @@ fn println(str: []const u8) void {
     }
 }
 
+// Converts the given integer into ASCII digits.
+fn digits(source: anytype, dest: []u8) usize {
+    var buffer: [10]u8 = undefined;
+    var i: usize = 0;
+    var j: usize = 0;
+    var temp = source;
+    while (temp != 0) : (i += 1) {
+        var digit: u8 = @truncate(@mod(temp, 10));
+        buffer[i] = digit + 0x30; // ASCII
+
+        temp = @divFloor(temp, 10);
+    }
+
+    const length = i;
+
+    while (i != 0) : ({
+        i -= 1;
+        j += 1;
+    }) {
+        dest[j] = buffer[i - 1];
+    }
+
+    return length;
+}
+
+fn println(header: []const u8, val: anytype) void {
+    var bytes: [10]u8 = undefined;
+    const len = digits(val, &bytes);
+
+    print(header);
+    print(bytes[0..len]);
+    print("\n");
+}
+
 pub fn main() !void {
     rcc_setup();
     gpio_setup();
     adc_setup();
     usart_setup();
+    comparator_setup();
+    lptim_setup();
+
+    const timer = delay.Timer{};
+    timer.setup();
+
+    // This is how we enable frequency measurement
+    c.gpio_set(c.GPIOA, c.GPIO4);
 
     const vrefint_cal_addr: *u32 = @ptrFromInt(0x1FF8_0078);
     const vref_cal: u32 = vrefint_cal_addr.*;
     _ = vref_cal;
+
+    const freq: u32 = c.rcc_apb1_frequency;
+    print(mem.asBytes(&freq));
+    println("Base frequency: ", freq);
 
     while (true) {
         c.adc_start_conversion_regular(c.ADC1);
@@ -107,15 +206,24 @@ pub fn main() !void {
 
         var temp: u16 = @intCast(c.adc_read_regular(c.ADC1));
         _ = std.mem.doNotOptimizeAway(temp);
+        // println(u32, "ADC: ", vref_cal);
 
         const foo = c.rcc_get_usart_clk_freq(c.USART2);
         _ = std.mem.doNotOptimizeAway(foo);
 
         c.gpio_toggle(c.GPIOA, c.GPIO10);
-        println("Hello World!\r");
-        for (0..1000000) |_| {
-            asm volatile ("nop");
-        }
+        // println("Hello World!\r");
+
+        c.lptimer_enable(c.LPTIM1);
+        c.lptimer_start_counter(c.LPTIM1, c.LPTIM_CR_SNGSTRT);
+
+        timer.delay_ms(100);
+        const val = c.lptimer_get_counter(c.LPTIM1);
+        c.lptimer_disable(c.LPTIM1);
+
+        // For debug purposes I print the frequency in Hertz over searial
+        const frequency: u32 = (@as(u32, val) * 1000) / 100;
+        println("Frequency: ", frequency);
     }
 
     unreachable;
