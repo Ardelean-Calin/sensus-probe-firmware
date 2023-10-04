@@ -17,11 +17,18 @@ pub fn build(b: *std.Build) void {
         .source_file = .{ .path = "src/main.zig" },
     });
 
-    firmware.artifact.defineCMacroRaw("STM32L0");
+    const libopencm3_dep = b.dependency("libopencm3", .{});
+    const libopencm3 = libopencm3_dep.artifact("opencm3");
 
-    firmware.artifact.addLibraryPath(.{ .path = "lib" });
-    firmware.artifact.linkSystemLibrary("opencm3_stm32l0");
-    firmware.addIncludePath(.{ .path = "./libopencm3/include/" });
+    firmware.artifact.defineCMacroRaw("STM32L0");
+    firmware.artifact.linkLibrary(libopencm3);
+    firmware.artifact.installLibraryHeaders(libopencm3);
+
+    // firmware.artifact.addLibraryPath(.{ .path = "lib" });
+    // firmware.artifact.linkSystemLibrary("opencm3_stm32l0");
+    // firmware.artifact.addLibraryPath(.{ .path = "./libopencm3/zig-out/lib/" });
+    // firmware.artifact.linkSystemLibrary("opencm3");
+    // firmware.addIncludePath(.{ .path = "./libopencm3/include/" });
     // firmware.addCSourceFile(.{ .file = .{ .path = "./libopencm3/lib/stm32/common/gpio_common_all.c" }, .flags = &[_][]const u8{} });
     // firmware.addCSourceFile(.{ .file = .{ .path = "./libopencm3/lib/stm32/common/gpio_common_f0234.c" }, .flags = &[_][]const u8{} });
     // firmware.addCSourceFile(.{ .file = .{ .path = "./libopencm3/lib/stm32/common/rcc_common_all.c" }, .flags = &[_][]const u8{} });
