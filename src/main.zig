@@ -144,21 +144,40 @@ fn print(str: []const u8) void {
     }
 }
 
-// Converts the given integer into ASCII digits.
-fn digits(source: anytype, dest: []u8) usize {
+/// Error type for ASCII conversion
+const DigitConversionError = error{
+    /// The provided buffer was not big enough and cannot fit the number.
+    BufferOverflow,
+};
+
+/// Converts the given integer into ASCII digits.
+/// Supports positive or negative integers.
+fn digits(source: anytype, dest: []u8) !usize {
     var buffer: [10]u8 = undefined;
     var i: usize = 0;
     var j: usize = 0;
-    var temp = source;
+    var temp = std.math.absCast(source);
+
     while (temp != 0) : (i += 1) {
+        if (i >= dest.len) {
+            return DigitConversionError.BufferOverflow;
+        }
+
         var digit: u8 = @truncate(@mod(temp, 10));
         buffer[i] = digit + 0x30; // ASCII
 
         temp = @divFloor(temp, 10);
     }
 
+    // Add the dash if negative.
+    if (source < 0) {
+        buffer[i] = 0x2D; // ASCII "-"
+        i += 1;
+    }
+
     const length = i;
 
+    // Reverse the contents in the slice.
     while (i != 0) : ({
         i -= 1;
         j += 1;
@@ -169,9 +188,9 @@ fn digits(source: anytype, dest: []u8) usize {
     return length;
 }
 
-fn println(header: []const u8, val: anytype) void {
+fn println(header: []const u8, val: anytype) !void {
     var bytes: [10]u8 = undefined;
-    const len = digits(val, &bytes);
+    const len = try digits(val, &bytes);
 
     print(header);
     print(bytes[0..len]);
@@ -198,7 +217,7 @@ pub fn main() !void {
 
     const freq: u32 = c.rcc_apb1_frequency;
     print(mem.asBytes(&freq));
-    println("Base frequency: ", freq);
+    try println("Base frequency: ", freq);
 
     while (true) {
         c.adc_start_conversion_regular(c.ADC1);
@@ -223,8 +242,33 @@ pub fn main() !void {
 
         // For debug purposes I print the frequency in Hertz over searial
         const frequency: u32 = (@as(u32, val) * 1000) / 100;
-        println("Frequency: ", frequency);
+        try println("Frequency: ", frequency);
     }
 
     unreachable;
+}
+
+test "expect that digits are converted successfully" {
+    // Create a buffer to store the converted result.
+    var buffer: [8]u8 = undefined;
+    var size: usize = 0;
+
+    size = try digits(@as(u8, 123), &buffer);
+    try std.testing.expectEqualSlices(u8, "123", buffer[0..size]);
+    size = try digits(@as(i8, -123), &buffer);
+    try std.testing.expectEqualSlices(u8, "-123", buffer[0..size]);
+
+    size = try digits(@as(u16, 3214), &buffer);
+    try std.testing.expectEqualSlices(u8, "3214", buffer[0..size]);
+    size = try digits(@as(i16, -3214), &buffer);
+    try std.testing.expectEqualSlices(u8, "-3214", buffer[0..size]);
+
+    size = try digits(@as(u32, 696969), &buffer);
+    try std.testing.expectEqualSlices(u8, "696969", buffer[0..size]);
+    size = try digits(@as(i32, -696969), &buffer);
+    try std.testing.expectEqualSlices(u8, "-696969", buffer[0..size]);
+
+    // Test that this function throws a overflow error if my buffer is too small.
+    var result = digits(@as(u32, 1_000_000_000), &buffer);
+    try std.testing.expectError(DigitConversionError.BufferOverflow, result);
 }
