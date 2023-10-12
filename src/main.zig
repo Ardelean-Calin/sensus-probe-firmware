@@ -152,48 +152,43 @@ const DigitConversionError = error{
 
 /// Converts the given integer into ASCII digits.
 /// Supports positive or negative integers.
-fn digits(source: anytype, dest: []u8) !usize {
-    var buffer: [10]u8 = undefined;
-    var i: usize = 0;
-    var j: usize = 0;
+fn digits(source: anytype, allocator: std.mem.Allocator) ![]u8 {
+    // var buffer: [10]u8 = undefined;
+    var buffer = std.ArrayList(u8).init(allocator);
+
     var temp = std.math.absCast(source);
 
-    while (temp != 0) : (i += 1) {
-        if (i >= dest.len) {
-            return DigitConversionError.BufferOverflow;
-        }
-
+    while (temp != 0) {
         var digit: u8 = @truncate(@mod(temp, 10));
-        buffer[i] = digit + 0x30; // ASCII
+        try buffer.append(digit + 0x30); // ASCII
 
         temp = @divFloor(temp, 10);
     }
 
     // Add the dash if negative.
     if (source < 0) {
-        buffer[i] = 0x2D; // ASCII "-"
-        i += 1;
+        try buffer.append(0x2D);
     }
 
-    const length = i;
+    var start: usize = 0;
+    var end = buffer.items.len;
 
-    // Reverse the contents in the slice.
-    while (i != 0) : ({
-        i -= 1;
-        j += 1;
-    }) {
-        dest[j] = buffer[i - 1];
+    while (start < end) {
+        const a = buffer.items[start];
+        const b = buffer.items[end - 1];
+
+        buffer.items[start] = b;
+        buffer.items[end - 1] = a;
+        start += 1;
+        end -= 1;
     }
 
-    return length;
+    return try buffer.toOwnedSlice();
 }
 
-fn println(header: []const u8, val: anytype) !void {
-    var bytes: [10]u8 = undefined;
-    const len = try digits(val, &bytes);
-
+fn println(header: []const u8, message: []u8) void {
     print(header);
-    print(bytes[0..len]);
+    print(message);
     print("\n");
 }
 
@@ -204,6 +199,13 @@ pub fn main() !void {
     usart_setup();
     comparator_setup();
     lptim_setup();
+
+    // 256 bytes of "heap" should be overkill for my array operations
+    var heap: [256]u8 = undefined;
+    var fa = std.heap.FixedBufferAllocator.init(&heap);
+    defer fa.reset();
+
+    const allocator = fa.allocator();
 
     const timer = delay.Timer{};
     timer.setup();
@@ -217,7 +219,7 @@ pub fn main() !void {
 
     const freq: u32 = c.rcc_apb1_frequency;
     print(mem.asBytes(&freq));
-    try println("Base frequency: ", freq);
+    // println("Base frequency: ", freq);
 
     while (true) {
         c.adc_start_conversion_regular(c.ADC1);
@@ -242,33 +244,66 @@ pub fn main() !void {
 
         // For debug purposes I print the frequency in Hertz over searial
         const frequency: u32 = (@as(u32, val) * 1000) / 100;
-        try println("Frequency: ", frequency);
+        const freq_ascii = try digits(frequency, allocator);
+        defer allocator.free(freq_ascii); // Very nice! I have to free this slice or I get a memory leak
+        // A common pattern with FixedBufferAllocators, is to reset them and reuse them.
+        // This frees all previous allocations and allows the allocator to be reused.
+        // defer fa.reset();
+
+        println("Frequency: ", freq_ascii);
     }
 
     unreachable;
 }
 
 test "expect that digits are converted successfully" {
-    // Create a buffer to store the converted result.
-    var buffer: [8]u8 = undefined;
-    var size: usize = 0;
+    const my_slice_u8 = try digits(@as(u8, 123), std.testing.allocator);
+    defer std.testing.allocator.free(my_slice_u8);
+    try std.testing.expectEqualSlices(u8, "123", my_slice_u8);
 
-    size = try digits(@as(u8, 123), &buffer);
-    try std.testing.expectEqualSlices(u8, "123", buffer[0..size]);
-    size = try digits(@as(i8, -123), &buffer);
-    try std.testing.expectEqualSlices(u8, "-123", buffer[0..size]);
+    const my_slice_i8 = try digits(@as(i8, -123), std.testing.allocator);
+    defer std.testing.allocator.free(my_slice_i8);
+    try std.testing.expectEqualSlices(u8, "-123", my_slice_i8);
 
-    size = try digits(@as(u16, 3214), &buffer);
-    try std.testing.expectEqualSlices(u8, "3214", buffer[0..size]);
-    size = try digits(@as(i16, -3214), &buffer);
-    try std.testing.expectEqualSlices(u8, "-3214", buffer[0..size]);
+    const my_slice_u16 = try digits(@as(u16, 12345), std.testing.allocator);
+    defer std.testing.allocator.free(my_slice_u16);
+    try std.testing.expectEqualSlices(u8, "12345", my_slice_u16);
 
-    size = try digits(@as(u32, 696969), &buffer);
-    try std.testing.expectEqualSlices(u8, "696969", buffer[0..size]);
-    size = try digits(@as(i32, -696969), &buffer);
-    try std.testing.expectEqualSlices(u8, "-696969", buffer[0..size]);
+    const my_slice_i16 = try digits(@as(i16, -12345), std.testing.allocator);
+    defer std.testing.allocator.free(my_slice_i16);
+    try std.testing.expectEqualSlices(u8, "-12345", my_slice_i16);
 
-    // Test that this function throws a overflow error if my buffer is too small.
-    var result = digits(@as(u32, 1_000_000_000), &buffer);
-    try std.testing.expectError(DigitConversionError.BufferOverflow, result);
+    const my_slice_u32 = try digits(@as(u32, 12345678), std.testing.allocator);
+    defer std.testing.allocator.free(my_slice_u32);
+    try std.testing.expectEqualSlices(u8, "12345678", my_slice_u32);
+
+    const my_slice_i32 = try digits(@as(i32, -12345678), std.testing.allocator);
+    defer std.testing.allocator.free(my_slice_i32);
+    try std.testing.expectEqualSlices(u8, "-12345678", my_slice_i32);
+
+    // try std.testing.expectEqualSlices(u8, "-123", try digits(@as(i8, -123), std.testing.allocator));
+
+    // size = try digits(@as(u16, 3214), std.testing.allocator);
+    // try std.testing.expectEqualSlices(u8, "3214", buffer[0..size]);
+    // size = try digits(@as(i16, -3214), std.testing.allocator);
+    // try std.testing.expectEqualSlices(u8, "-3214", buffer[0..size]);
+
+    // size = try digits(@as(u32, 696969), std.testing.allocator);
+    // try std.testing.expectEqualSlices(u8, "696969", buffer[0..size]);
+    // size = try digits(@as(i32, -696969), std.testing.allocator);
+    // try std.testing.expectEqualSlices(u8, "-696969", buffer[0..size]);
+
+    // // Test that this function throws a overflow error if my buffer is too small.
+    // var result = digits(@as(u32, 1_000_000_000), std.testing.allocator);
+    // try std.testing.expectError(DigitConversionError.BufferOverflow, result);
 }
+
+// test "detect leak" {
+//     var list = std.ArrayList(u21).init(std.testing.allocator);
+//     // missing `defer list.deinit();`
+//     try list.append('☔');
+
+//     try std.testing.expect(list.items.len == 1);
+
+//     _ = try list.toOwnedSlice();
+// }
