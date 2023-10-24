@@ -2,7 +2,6 @@ const std = @import("std");
 const mem = std.mem;
 const microzig = @import("microzig");
 const delay = @import("delay.zig");
-const fsm = @import("zigfsm/src/main.zig");
 
 const c = @cImport({
     @cInclude("libopencm3/stm32/gpio.h");
@@ -249,74 +248,8 @@ const Event = enum {
     TimerExpired,
 };
 
-const FSM = fsm.StateMachine(State, Event, .Sleeping);
-
 var temperature: u16 = 0;
 var frequency: u32 = 0;
-
-const SmHandler = struct {
-    handler: FSM.Handler,
-    status: Status,
-
-    pub fn init() @This() {
-        return .{
-            .handler = fsm.Interface.make(FSM.Handler, @This()),
-            .status = Status{ .measuringTemperature = false, .measuringMoisture = false },
-        };
-    }
-
-    pub fn onTransition(handler: *FSM.Handler, event: ?Event, from: State, to: State) fsm.HandlerResult {
-        const self = fsm.Interface.downcast(@This(), handler);
-
-        // Handle the transition from Sleeping to measuring.
-        if (from == .Sleeping and to == .Measuring and event != null) {
-            switch (event.?) {
-                .MeasTemp => {
-                    startTemp();
-                    self.status.measuringTemperature = true;
-                    // TODO: Set delay
-                },
-                .MeasMoisture => {
-                    startMoisture();
-                    self.status.measuringMoisture = true;
-                    // TODO: Set delay
-                },
-                .MeasBoth => {
-                    startMoisture();
-                    startTemp();
-                    self.status.measuringTemperature = true;
-                    self.status.measuringMoisture = true;
-                    // TODO: Set delay
-                },
-                else => return fsm.HandlerResult.Cancel,
-            }
-        } else if (from == .Measuring and to == .Sleeping and event != null) {
-            if (event == .TimerExpired) {
-                // Timer expired, we need to read the latest value!
-                // TODO. Read
-                if (self.status.measuringTemperature == true) {
-                    temperature = @intCast(c.adc_read_regular(c.ADC1));
-
-                    self.status.measuringTemperature = false;
-                }
-                if (self.status.measuringMoisture == true) {
-                    const val = c.lptimer_get_counter(c.LPTIM1);
-                    c.lptimer_disable(c.LPTIM1);
-                    frequency = (@as(u32, val) * 1000) / 100;
-
-                    self.status.measuringMoisture = false;
-                }
-
-                // Prepare to sleep
-                c.gpio_clear(c.GPIOA, c.GPIO6); // Disable temperature measurement
-                c.gpio_clear(c.GPIOA, c.GPIO4); // Disable frequency measurement
-            } else {
-                return fsm.HandlerResult.Cancel; // Should be illegal
-            }
-        }
-        return fsm.HandlerResult.Continue;
-    }
-};
 
 pub const microzig_options = struct {
     pub const interrupts = struct {
@@ -370,19 +303,6 @@ pub fn main() !void {
     c.timer_one_shot_mode(c.TIM2);
     c.timer_enable_irq(c.TIM2, c.TIM_DIER_UIE);
     // This starts the timer in one-shot mode.
-    c.timer_enable_counter(c.TIM2);
-
-    // Define main state machine. See docs/diagrams/SM1.excalidraw
-    var myfsm = FSM.init();
-    // zig fmt: off
-    try myfsm.addEventAndTransition(.MeasTemp,     .Sleeping,     .Measuring);
-    try myfsm.addEventAndTransition(.MeasMoisture, .Sleeping,     .Measuring);
-    try myfsm.addEventAndTransition(.MeasBoth,     .Sleeping,     .Measuring);
-    try myfsm.addEventAndTransition(.TimerExpired, .Measuring,    .Sleeping);
-    // zig fmt: on
-    // Add a handler
-    var smHandler = SmHandler.init();
-    myfsm.setTransitionHandlers(&.{&smHandler.handler});
 
     c.gpio_toggle(c.GPIOA, c.GPIO10);
     c.timer_enable_counter(c.TIM2);
