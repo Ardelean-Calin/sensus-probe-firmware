@@ -406,30 +406,4 @@ test "expect that digits are converted successfully" {
     const my_slice_i32 = try digits(@as(i32, -12345678), std.testing.allocator);
     defer std.testing.allocator.free(my_slice_i32);
     try std.testing.expectEqualSlices(u8, "-12345678", my_slice_i32);
-
-    // try std.testing.expectEqualSlices(u8, "-123", try digits(@as(i8, -123), std.testing.allocator));
-
-    // size = try digits(@as(u16, 3214), std.testing.allocator);
-    // try std.testing.expectEqualSlices(u8, "3214", buffer[0..size]);
-    // size = try digits(@as(i16, -3214), std.testing.allocator);
-    // try std.testing.expectEqualSlices(u8, "-3214", buffer[0..size]);
-
-    // size = try digits(@as(u32, 696969), std.testing.allocator);
-    // try std.testing.expectEqualSlices(u8, "696969", buffer[0..size]);
-    // size = try digits(@as(i32, -696969), std.testing.allocator);
-    // try std.testing.expectEqualSlices(u8, "-696969", buffer[0..size]);
-
-    // // Test that this function throws a overflow error if my buffer is too small.
-    // var result = digits(@as(u32, 1_000_000_000), std.testing.allocator);
-    // try std.testing.expectError(DigitConversionError.BufferOverflow, result);
 }
-
-// test "detect leak" {
-//     var list = std.ArrayList(u21).init(std.testing.allocator);
-//     // missing `defer list.deinit();`
-//     try list.append('☔');
-
-//     try std.testing.expect(list.items.len == 1);
-
-//     _ = try list.toOwnedSlice();
-// }
