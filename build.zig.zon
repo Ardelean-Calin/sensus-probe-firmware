@@ -14,9 +14,9 @@
             .url = "https://github.com/Ardelean-Calin/libopencm3-zig/archive/8cf84a86.tar.gz",
             .hash = "1220f4d6b32bc2fba57e5218706ab5dc2d1fb3a26c234670f9d81f4f7c2aee2a73e1",
         },
-        .zigfsm = .{
-            .url = "https://github.com/cryptocode/zigfsm/archive/refs/heads/main.tar.gz",
-            .hash = "1220d81dbee93731a9ccaaab18014d01ec8ddd7c9aa99d78a4199d65228ac632b924",
-        },
+        .smiz = .{
+            .url = "https://github.com/Ardelean-Calin/smiz/archive/refs/heads/main.tar.gz",
+            .hash = "1220cc45f07e802ac2af9b00deb98f8c4f331aa7f3be49dd83a06f41d03cc851e83f",
+        }
     },
 }

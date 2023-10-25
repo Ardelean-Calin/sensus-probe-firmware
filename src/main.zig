@@ -2,6 +2,7 @@ const std = @import("std");
 const mem = std.mem;
 const microzig = @import("microzig");
 const delay = @import("delay.zig");
+const smiz = @import("smiz");
 
 const c = @cImport({
     @cInclude("libopencm3/stm32/gpio.h");
@@ -195,58 +196,68 @@ fn println(header: []const u8, message: []u8) void {
     print("\n");
 }
 
-// These global variables will be returned over I2C
-// TO-DO. I need some kind of transition table to show:
-// If I am in state A and event X comes, I go to state B
-//
-// This table shall contain all valid transitions
+var status = .{
+    .measuring_temperature = false,
+    .measuring_moisture = true,
+};
 
-// fn advanceState(curr: State, event: Event) State {
-//     _ = event;
-//     _ = curr;
-//     return State.Sleeping;
-// }
-
-// const Status = packed struct(u2) {
-//     meas_moisture: bool,
-//     meas_temperature: bool,
+// const State = enum {
+//     Sleeping,
+//     Measuring,
 // };
 
-// const State = struct {
-//     name: []const u8,
-//     onEnter: *const fn (event: Event) void,
-//     onLeave: *const fn (event: Event) void,
+// // Get status doesn't need to be in events, since those commands are responded instantly
+// const Event = enum {
+//     MeasTemp,
+//     MeasMoisture,
+//     MeasBoth,
+//     TimerExpired,
 // };
 
-// const Sleeping = State{
-//     .name = "Sleeping",
-//     .onEnter = {
-//         // Stop the frequency and temperature measurement.
-//         c.gpio_clear(c.GPIOA, c.GPIO4);
-//         c.gpio_clear(c.GPIOA, c.GPIO6);
-
-//         // Go to sleep
-//         asm ("wfi");
+// // zig fmt: off
+// var sm = smiz.StateMachine(
+//     .{
+//         .state_type = State,
+//         .event_type = Event,
+//         .initial_state = .Sleeping,
+//         .transitions = &.{
+//             .{ .event = .MeasTemp,     .from = .Sleeping,  .to = .Measuring },
+//             .{ .event = .MeasMoisture, .from = .Sleeping,  .to = .Measuring },
+//             .{ .event = .MeasBoth,     .from = .Sleeping,  .to = .Measuring },
+//             .{ .event = .TimerExpired, .from = .Measuring, .to = .Sleeping },
+//         },
 //     },
-//     .onLeave = null,
-// };
-const Status = struct {
-    measuringTemperature: bool = false,
-    measuringMoisture: bool = false,
-};
+// ){};
+// // zig fmt: on
 
+// Simple blinky state machine
 const State = enum {
-    Sleeping,
-    Measuring,
+    On,
+    Off,
 };
 
-// Get status doesn't need to be in events, since those commands are responded instantly
-const Event = enum {
-    MeasTemp,
-    MeasMoisture,
-    MeasBoth,
-    TimerExpired,
-};
+/// Called on State Machine state transition
+pub fn onStateTransition(from: State, to: State) void {
+    _ = to;
+    c.gpio_toggle(c.GPIOA, c.GPIO10);
+    if (from == .On) {
+        c.timer_set_period(c.TIM2, 500); // 500ms
+    } else {
+        c.timer_set_period(c.TIM2, 100); // 100ms
+    }
+    c.timer_set_counter(c.TIM2, 1);
+    c.timer_enable_counter(c.TIM2);
+}
+
+var sm = smiz.StateMachine(.{
+    .state_type = State,
+    .initial_state = .Off,
+    .transitions = &.{
+        .{ .from = .On, .to = .Off },
+        .{ .from = .Off, .to = .On },
+    },
+    .handler = &onStateTransition,
+}){};
 
 var temperature: u16 = 0;
 var frequency: u32 = 0;
@@ -256,12 +267,9 @@ pub const microzig_options = struct {
         pub fn TIM2() void {
             // Seems this is a valid way to call an ISR
             // interrupt handling code
-            c.gpio_toggle(c.GPIOA, c.GPIO10);
+            // c.gpio_toggle(c.GPIOA, c.GPIO10);
             c.timer_clear_flag(c.TIM2, c.TIM_SR_UIF);
-            // Once in the ISR, the counter enable flag was automatically cleared.
-            // Here we restart the counter
-            c.timer_set_counter(c.TIM2, 1);
-            c.timer_enable_counter(c.TIM2);
+            sm.step() catch unreachable;
         }
     };
 };

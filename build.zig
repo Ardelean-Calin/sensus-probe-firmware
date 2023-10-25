@@ -17,6 +17,13 @@ pub fn build(b: *std.Build) void {
         .source_file = .{ .path = "src/main.zig" },
     });
 
+    // const smiz_module = firmware.host_build.createModule(.{
+    //     .source_file = .{ .path = "src/libs/smiz/src/smiz.zig" },
+    // });
+    const smiz_dep = b.dependency("smiz", .{});
+    const smiz_module = smiz_dep.module("smiz");
+    firmware.addAppDependency("smiz", smiz_module, .{});
+
     const libopencm3_dep = b.dependency("libopencm3", .{});
     const libopencm3 = libopencm3_dep.artifact("opencm3");
 
